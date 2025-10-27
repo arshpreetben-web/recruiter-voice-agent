@@ -1,15 +1,24 @@
 from flask import Flask, render_template, request, jsonify
-from src.stt.speech_to_text import SpeechToText
-from src.tts.text_to_speech import TextToSpeech
 from transformers import pipeline
 import csv
 import datetime
+from src.stt.speech_to_text import SpeechToText
+import threading
+import os
+
+from src.nlu.intent import process_command
+from src.tts.text_to_speech import TextToSpeech
+
+
+from src.nlu.pdf_parser import extract_text_from_pdf 
 
 app = Flask(__name__)
 
 # Initialize modules
 stt = SpeechToText()
 tts = TextToSpeech()
+
+
 sentiment_analyzer = pipeline("sentiment-analysis")
 
 # Log greetings
@@ -39,37 +48,80 @@ def home():
 # Greeting / Voice input route
 @app.route('/voice_input', methods=['POST'])
 def voice_input():
-    audio_file = request.files.get('audio')
-    if not audio_file:
-        return jsonify({"error": "No audio file received"}), 400
-    print("✅ Audio received:", audio_file)
+    try:
+        audio_file = request.files.get('audio')
+        if not audio_file:
+            return jsonify({"error": "No audio file received"}), 400
+        print("✅ Audio received:", audio_file)
 
-    candidate_response = stt.transcribe_audio_fileobj(audio_file)
-    print("🗣️ Candidate response:", candidate_response)
+        # 1️⃣ STT: Convert audio to text
+        candidate_response = stt.transcribe_audio_fileobj(audio_file)
+        print("🗣️ Candidate response:", candidate_response)
 
-    sentiment = sentiment_analyzer(candidate_response)[0]
-    tts.speak(f"Tone: {sentiment['label']}")
+        # 2️⃣ Sentiment analysis
+        sentiment = sentiment_analyzer(candidate_response)[0]
+        print("💬 Sentiment:", sentiment)
 
-    log_greeting_response(candidate_response, sentiment)
+        # 3️⃣ NLU: Process command / intent
+        intent_response = process_command(text)
+        print("🤖 Intent response:", intent_response)
 
-    return jsonify({
-        "text": candidate_response,
-        "sentiment": sentiment
-    })
+        # 4️⃣ TTS: Speak back
+        threading.Thread(
+        target=tts.speak, 
+        args=(f"{intent_response}. Tone: {sentiment['label']}",),
+        daemon=True
+        ).start()
+        # 5️⃣ Log the greeting / response
+        log_greeting_response(candidate_response, sentiment)
+
+        return jsonify({
+            "text": candidate_response,
+            "sentiment": sentiment,
+            "intent_response": intent_response
+        }),200
+    except Exception as e:
+        import traceback
+        print("❌ Error in /voice_input:", e)
+        traceback.print_exc()
+        # ✅ Return JSON even when something fails
+        return jsonify({
+            "error": str(e),
+            "message": "Internal server error occurred in voice_input route."
+        }), 500
+    
 
 
 
-# Resume + JD analysis placeholder (future)
+
+
+
 @app.route('/analyze_resume', methods=['POST'])
 def analyze_resume():
     resume_file = request.files.get('resume')
     jd_file = request.files.get('jd')
+
     if not resume_file or not jd_file:
         return jsonify({"error": "Resume or JD missing"}), 400
 
-    # Placeholder logic
-    skill_match = {"match_percentage": 75, "skills_matched": ["Python", "ML"]}
-    return jsonify(skill_match)
+    try:
+        # Extract text using our helper
+        resume_text = extract_text_from_pdf(resume_file)
+        jd_text = extract_text_from_pdf(jd_file)
+
+        # Basic analysis — word counts and text snippets
+        resume_words = len(resume_text.split())
+        jd_words = len(jd_text.split())
+
+        return jsonify({
+            "resume_word_count": resume_words,
+            "jd_word_count": jd_words,
+            "resume_excerpt": resume_text[:500] + "..." if len(resume_text) > 500 else resume_text,
+            "jd_excerpt": jd_text[:500] + "..." if len(jd_text) > 500 else jd_text
+        })
+    except Exception as e:
+        print("❌ Error during resume analysis:", e)
+        return jsonify({"error": str(e)}), 500
 
 # Evaluation summary placeholder
 @app.route('/summary')

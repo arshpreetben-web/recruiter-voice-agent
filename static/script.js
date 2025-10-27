@@ -75,3 +75,31 @@ uploadBtn.addEventListener("click", async () => {
     const data = await res.json();
     skillMatch.innerText = `Match: ${data.match_percentage}% | Skills Matched: ${data.skills_matched.join(", ")}`;
 });
+fetch("http://127.0.0.1:5000/voice_input", {
+  method: "POST",
+  body: formData
+})
+.then(async response => {
+  const data = await response.json().catch(() => null);
+
+  if (!response.ok || !data) {
+    console.error("❌ Server returned an error:", data);
+    alert("⚠️ Server error — check Flask console for details.");
+    return;
+  }
+
+  console.log("✅ Server Response:", data);
+
+  // 🧠 Fix: check if sentiment exists before accessing label
+  const sentimentLabel = data.sentiment?.label || "UNKNOWN";
+  const responseText = data.response || data.error || "No response";
+
+  // Display result safely
+  document.getElementById("response").innerText =
+    `${responseText} (Tone: ${sentimentLabel})`;
+})
+.catch(err => {
+  console.error("❌ Fetch error:", err);
+  alert("Network error — Flask might have crashed or restarted.");
+});
+
