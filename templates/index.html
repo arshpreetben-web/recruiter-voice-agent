@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>AI Recruiter</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>🎙️ AI Recruiter</h1>
+
+        <!-- Voice Interaction Card -->
+        <div class="card">
+            <h2>Voice Interaction</h2>
+            <button id="recordBtn">🎤 Record Response</button>
+            <p id="status">Click to record</p>
+            <p id="candidateText"></p>
+            <p id="sentimentText"></p>
+        </div>
+
+        <!-- Resume & JD Upload Card -->
+        <div class="card">
+            <h2>Resume & Job Description Upload</h2>
+            <input type="file" id="resumeFile" accept=".pdf,.doc,.docx"><br><br>
+            <input type="file" id="jdFile" accept=".pdf,.doc,.docx"><br><br>
+            <button id="uploadBtn">Analyze Skills</button>
+            <p id="skillMatch"></p>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
