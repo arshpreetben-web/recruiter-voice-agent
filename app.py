@@ -1,139 +1,292 @@
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, send_file
 from transformers import pipeline
-import csv
-import datetime
-from src.stt.speech_to_text import SpeechToText
 import threading
-import os
+import io
+import re
 
-from src.nlu.intent import process_command
+# Custom modules
+from src.stt.speech_to_text import SpeechToText
 from src.tts.text_to_speech import TextToSpeech
+from src.nlu.pdf_parser import extract_text_from_pdf
+from src.interview.interview_manager import InterviewManager
 
-
-from src.nlu.pdf_parser import extract_text_from_pdf 
-
+# ----------------------------------------------------------------
+# ⚙️ Initialize
+# ----------------------------------------------------------------
 app = Flask(__name__)
-
-# Initialize modules
 stt = SpeechToText()
 tts = TextToSpeech()
 
+# 🎯 Sentiment analysis model (3-label conversational)
+sentiment_analyzer = pipeline(
+    "sentiment-analysis",
+    model="cardiffnlp/twitter-roberta-base-sentiment-latest"
+)
 
-sentiment_analyzer = pipeline("sentiment-analysis")
+# 🎯 Feedback model — instruction-tuned (better than GPT-2)
+feedback_generator = pipeline(
+    "text2text-generation",
+    model="google/flan-t5-small"     # You can upgrade to flan-t5-base if GPU
+)
 
-# Log greetings
-def log_greeting_response(response_text, sentiment):
-    os.makedirs("data", exist_ok=True)
-    file_path = os.path.join("data", "greeting_log.csv")
-    file_exists = os.path.isfile(file_path)
+interview = InterviewManager()
 
-    with open(file_path, "a", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        # Write headers only if file is new
-        if not file_exists:
-            writer.writerow(["timestamp", "response_text", "sentiment_label", "sentiment_score"])
-        writer.writerow([
-            datetime.datetime.now().isoformat(),
-            response_text,
-            sentiment["label"],
-            sentiment["score"]
-        ])
-
-
-# Home route
+# ----------------------------------------------------------------
+# 🏠 Home
+# ----------------------------------------------------------------
 @app.route('/')
 def home():
     return render_template("index.html")
 
-# Greeting / Voice input route
+# ----------------------------------------------------------------
+# 🎯 Helper — compute numeric scores
+# ----------------------------------------------------------------
+def rubric_scores(answer_text, question_text):
+    """Simple numeric rubric: content + clarity (0–100)."""
+    a = answer_text.lower().strip()
+    q = question_text.lower()
+
+    # Content score: presence of keywords from the question
+    keywords = re.findall(r'\b[a-zA-Z]{3,}\b', q)
+    hits = sum(1 for k in keywords if k in a)
+    content_score = min(95, int(30 + (hits / max(1, len(keywords))) * 70))
+
+    # Clarity score: filler words and length balance
+    filler = ["um", "uh", "like", "you know", "basically", "actually"]
+    filler_count = sum(a.count(f) for f in filler)
+    word_count = len(a.split())
+    clarity_score = max(0, min(100, int(70 - filler_count * 5 + word_count * 0.2)))
+
+    return content_score, clarity_score
+
+# ----------------------------------------------------------------
+# 🎯 Helper — generate structured feedback
+# ----------------------------------------------------------------
+def generate_feedback(answer, question):
+    """Use FLAN-T5 to generate short structured feedback."""
+    content_score, clarity_score = rubric_scores(answer, question)
+
+    prompt = f"""
+You are a concise and friendly AI interview coach.
+Analyze the following candidate answer and provide:
+1. One short sentence about clarity/confidence.
+2. One short sentence about content quality.
+3. A short tip for improvement.
+
+Format exactly as:
+CLARITY: ...
+CONTENT: ...
+TIP: ...
+
+QUESTION: {question}
+ANSWER: {answer}
+"""
+
+    try:
+        out = feedback_generator(prompt, max_length=120, do_sample=False)[0]["generated_text"].strip()
+        lines = [l.strip() for l in re.split(r'[\r\n]+', out) if l.strip()]
+        lines = lines[:3]
+        if len(lines) < 3:
+            lines += [""] * (3 - len(lines))
+        feedback_text = " ".join(lines)
+    except Exception as e:
+        print("❌ Feedback generation error:", e)
+        feedback_text = "CLARITY: Clear but can improve flow. CONTENT: Covers points but lacks detail. TIP: Add a concrete example."
+
+    return feedback_text, content_score, clarity_score
+
+# ----------------------------------------------------------------
+# 🎙️ Voice → Text + Sentiment + Feedback
+# ----------------------------------------------------------------
 @app.route('/voice_input', methods=['POST'])
 def voice_input():
     try:
         audio_file = request.files.get('audio')
         if not audio_file:
             return jsonify({"error": "No audio file received"}), 400
-        print("✅ Audio received:", audio_file)
 
-        # 1️⃣ STT: Convert audio to text
         candidate_response = stt.transcribe_audio_fileobj(audio_file)
-        print("🗣️ Candidate response:", candidate_response)
+        if not candidate_response.strip():
+            return jsonify({"error": "Speech not recognized"}), 200
 
-        # 2️⃣ Sentiment analysis
+        # Run sentiment analysis
         sentiment = sentiment_analyzer(candidate_response)[0]
-        print("💬 Sentiment:", sentiment)
+        sentiment_label = sentiment["label"].capitalize()
+        sentiment_score = round(float(sentiment["score"]), 3)
 
-        # 3️⃣ NLU: Process command / intent
-        intent_response = process_command(text)
-        print("🤖 Intent response:", intent_response)
+        tone_map = {
+            "Positive": "Confident and enthusiastic",
+            "Neutral": "Calm and balanced",
+            "Negative": "Uncertain or hesitant"
+        }
+        human_tone = tone_map.get(sentiment_label, sentiment_label)
 
-        # 4️⃣ TTS: Speak back
-        threading.Thread(
-        target=tts.speak, 
-        args=(f"{intent_response}. Tone: {sentiment['label']}",),
-        daemon=True
-        ).start()
-        # 5️⃣ Log the greeting / response
-        log_greeting_response(candidate_response, sentiment)
+        # Current question
+        current_q = interview.current_questions[interview.current_index]
 
+        # 🔥 Generate improved feedback
+        feedback_text, content_score, clarity_score = generate_feedback(candidate_response, current_q)
+
+        # Store result
+        interview.results.append({
+            "question": current_q,
+            "answer": candidate_response,
+            "sentiment": sentiment_label,
+            "confidence": sentiment_score,
+            "feedback": feedback_text,
+            "content_score": content_score,
+            "clarity_score": clarity_score
+        })
+
+        # Next question logic
+        next_q = None
+        if interview.current_index + 1 < len(interview.current_questions):
+            interview.current_index += 1
+            next_q = interview.current_questions[interview.current_index]
+
+        # ✅ Response to frontend
         return jsonify({
             "text": candidate_response,
-            "sentiment": sentiment,
-            "intent_response": intent_response
-        }),200
+            "sentiment": {
+                "label": human_tone,
+                "score": sentiment_score
+            },
+            "feedback": feedback_text,
+            "content_score": content_score,
+            "clarity_score": clarity_score,
+            "next_question": next_q,
+            "is_last": next_q is None
+        }), 200
+
     except Exception as e:
-        import traceback
         print("❌ Error in /voice_input:", e)
-        traceback.print_exc()
-        # ✅ Return JSON even when something fails
-        return jsonify({
-            "error": str(e),
-            "message": "Internal server error occurred in voice_input route."
-        }), 500
-    
+        return jsonify({"error": str(e)}), 500
 
-
-
-
-
-
+# ----------------------------------------------------------------
+# 📄 Resume + JD Analysis
+# ----------------------------------------------------------------
 @app.route('/analyze_resume', methods=['POST'])
 def analyze_resume():
-    resume_file = request.files.get('resume')
-    jd_file = request.files.get('jd')
-
-    if not resume_file or not jd_file:
-        return jsonify({"error": "Resume or JD missing"}), 400
-
     try:
-        # Extract text using our helper
+        resume_file = request.files.get('resume')
+        jd_file = request.files.get('jd')
+        if not resume_file or not jd_file:
+            return jsonify({"error": "Please upload both Resume and JD"}), 400
+
         resume_text = extract_text_from_pdf(resume_file)
         jd_text = extract_text_from_pdf(jd_file)
 
-        # Basic analysis — word counts and text snippets
-        resume_words = len(resume_text.split())
-        jd_words = len(jd_text.split())
+        skill_keywords = [
+            "python", "machine learning", "data analysis", "flask", "sql",
+            "ai", "deep learning", "communication", "nlp", "pandas"
+        ]
+        matched = [s for s in skill_keywords if s in resume_text.lower() and s in jd_text.lower()]
+        match_percentage = round((len(matched) / len(skill_keywords)) * 100, 2)
 
         return jsonify({
-            "resume_word_count": resume_words,
-            "jd_word_count": jd_words,
-            "resume_excerpt": resume_text[:500] + "..." if len(resume_text) > 500 else resume_text,
-            "jd_excerpt": jd_text[:500] + "..." if len(jd_text) > 500 else jd_text
-        })
+            "match_percentage": match_percentage,
+            "skills_matched": matched
+        }), 200
     except Exception as e:
         print("❌ Error during resume analysis:", e)
         return jsonify({"error": str(e)}), 500
 
-# Evaluation summary placeholder
+# ----------------------------------------------------------------
+# 🚀 Start Mock Interview (5 default Qs)
+# ----------------------------------------------------------------
+@app.route('/start_interview', methods=['POST'])
+def start_interview():
+    try:
+        resume_file = request.files.get('resume')
+        jd_file = request.files.get('jd')
+        if not resume_file or not jd_file:
+            return jsonify({"error": "Resume or JD missing"}), 400
+
+        _ = extract_text_from_pdf(resume_file)
+        _ = extract_text_from_pdf(jd_file)
+
+        intro_question = "Let's begin. Please introduce yourself."
+        questions = [
+            "Can you explain one of your recent projects and what technologies you used?",
+            "Which programming language or tool do you feel most confident with, and why?",
+            "How do you usually approach solving a complex technical or logical problem?",
+            "Tell me about a time when you faced a challenge and how you overcame it.",
+            "Why do you think you are a good fit for this role?"
+        ]
+        all_questions = [intro_question] + questions
+
+        interview.current_questions = all_questions
+        interview.current_index = 0
+        interview.results = []
+
+        first_question = all_questions[0]
+        print(f"🎤 First question ready: {first_question}")
+
+        return jsonify({
+            "status": "success",
+            "first_question": first_question,
+            "all_questions": all_questions
+        }), 200
+    except Exception as e:
+        print("❌ Error in /start_interview:", e)
+        return jsonify({"error": str(e)}), 500
+
+# ----------------------------------------------------------------
+# 🔊 Text-to-Speech (gTTS)
+# ----------------------------------------------------------------
+@app.route('/speak_question', methods=['POST'])
+def speak_question():
+    try:
+        question = request.form.get("question", "")
+        if not question:
+            return jsonify({"error": "No question provided"}), 400
+
+        audio_bytes = tts.generate_audio_bytes(question)
+        if not audio_bytes:
+            return jsonify({"error": "TTS generation failed"}), 500
+
+        return send_file(io.BytesIO(audio_bytes), mimetype="audio/mpeg", as_attachment=False)
+    except Exception as e:
+        print("❌ Error in /speak_question:", e)
+        return jsonify({"error": str(e)}), 500
+
+# ----------------------------------------------------------------
+# 📊 Summary
+# ----------------------------------------------------------------
 @app.route('/summary')
 def summary():
-    # Placeholder for actual evaluation
-    summary_data = {
-        "strengths": ["Communication", "Problem-solving"],
-        "weaknesses": ["Time management"],
-        "confidence_score": 0.82,
-        "recommendation": "Proceed to next round"
-    }
-    return render_template("summary.html", summary=summary_data)
+    try:
+        summary_data = interview.get_summary()
+        if not interview.results:
+            return jsonify({"error": "No interview data found"}), 400
 
+        avg_conf = sum(r["confidence"] for r in interview.results) / len(interview.results)
+        avg_content = sum(r["content_score"] for r in interview.results) / len(interview.results)
+        avg_clarity = sum(r["clarity_score"] for r in interview.results) / len(interview.results)
+
+        strengths = [r["question"] for r in interview.results if r["sentiment"].lower() == "positive"]
+        weaknesses = [r["question"] for r in interview.results if r["sentiment"].lower() == "negative"]
+
+        interview_score = round((avg_content + avg_clarity + avg_conf * 100) / 3, 2)
+
+        summary_data.update({
+            "total_questions": len(interview.results),
+            "average_confidence": round(avg_conf, 2),
+            "average_content": round(avg_content, 2),
+            "average_clarity": round(avg_clarity, 2),
+            "interview_score": interview_score,
+            "strengths": strengths or ["Good communication"],
+            "weaknesses": weaknesses or ["Needs more clarity"],
+            "recommendation": "Excellent work completing your mock interview! Keep refining your technical depth and delivery."
+        })
+
+        return render_template("summary.html", summary=summary_data)
+    except Exception as e:
+        print("❌ Error in /summary:", e)
+        return jsonify({"error": str(e)}), 500
+
+# ----------------------------------------------------------------
+# ✅ Run Server
+# ----------------------------------------------------------------
 if __name__ == "__main__":
     app.run(debug=True)

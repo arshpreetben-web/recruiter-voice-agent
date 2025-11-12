@@ -1,44 +1,266 @@
+/* ---------------------- */
+/* 🌸 Base Styles */
+/* ---------------------- */
 body {
-    font-family: Arial, sans-serif;
-    background: #f4f7f9;
-    margin: 0;
-    padding: 0;
+  font-family: 'Poppins', sans-serif;
+  background-color: #f7f9fc;
+  margin: 0;
+  padding: 0;
 }
 
 .container {
-    max-width: 800px;
-    margin: 50px auto;
-    padding: 10px;
+  max-width: 800px;
+  margin: 50px auto;
+  padding: 10px;
 }
 
 h1 {
-    text-align: center;
-    color: #333;
-}
-
-.card {
-    background: #fff;
-    padding: 20px;
-    margin-bottom: 20px;
-    border-radius: 12px;
-    box-shadow: 0 5px 15px rgba(0,0,0,0.1);
-}
-
-button {
-    background: #4CAF50;
-    color: white;
-    border: none;
-    padding: 12px 20px;
-    border-radius: 8px;
-    cursor: pointer;
-    font-size: 16px;
-}
-
-button:hover {
-    background: #45a049;
+  text-align: center;
+  color: #333;
 }
 
 p {
-    font-size: 16px;
-    color: #555;
+  font-size: 16px;
+  color: #555;
+}
+
+/* ---------------------- */
+/* 🌟 Cards and Buttons */
+/* ---------------------- */
+.card {
+  background: #fff;
+  padding: 20px;
+  margin-bottom: 20px;
+  border-radius: 12px;
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+  transition: all 0.3s ease-in-out;
+}
+.card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08);
+}
+
+button {
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 16px;
+  transition: 0.3s ease;
+}
+
+button:hover {
+  transform: scale(1.03);
+}
+
+/* Gradient buttons */
+.btn-primary {
+  background: linear-gradient(90deg, #5b5be9, #9b59b6);
+  color: white;
+}
+.btn-primary:hover {
+  background: linear-gradient(90deg, #9b59b6, #5b5be9);
+}
+
+.btn-success {
+  background: linear-gradient(90deg, #28a745, #218838);
+  color: white;
+}
+.btn-success:hover {
+  background: linear-gradient(90deg, #218838, #28a745);
+}
+
+.btn-gradient {
+  background: linear-gradient(90deg, #5b5be9, #9b59b6);
+  color: white;
+  border: none;
+  border-radius: 30px;
+  padding: 10px 25px;
+  transition: 0.3s ease;
+}
+.btn-gradient:hover {
+  transform: scale(1.05);
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.15);
+}
+
+/* ---------------------- */
+/* 🎯 Hero Section */
+/* ---------------------- */
+.hero {
+  background: linear-gradient(120deg, #ece9ff, #f8f6ff);
+  border-radius: 16px;
+  margin: 40px auto;
+  max-width: 900px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
+  padding: 60px 20px;
+}
+.hero h1 {
+  color: #222;
+}
+.hero p {
+  color: #555;
+}
+
+/* ---------------------- */
+/* 🎙️ Recording Animation */
+/* ---------------------- */
+.recording {
+  animation: pulse 1.2s infinite;
+  background: linear-gradient(90deg, #9b59b6, #5b5be9) !important;
+  color: white !important;
+}
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(91, 91, 233, 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 20px rgba(91, 91, 233, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(91, 91, 233, 0);
+  }
+}
+
+/* ---------------------- */
+/* 💬 Toast Colors */
+/* ---------------------- */
+.bg-success {
+  background-color: #28a745 !important;
+}
+.bg-danger {
+  background-color: #dc3545 !important;
+}
+.bg-warning {
+  background-color: #ffc107 !important;
+  color: #333 !important;
+}
+.bg-info {
+  background-color: #17a2b8 !important;
+}
+.bg-secondary {
+  background-color: #6c757d !important;
+}
+
+/* ---------------------- */
+/* 🧑‍💼 Interviewer Bubble */
+/* ---------------------- */
+.interviewer-box {
+  font-size: 1.1rem;
+  background-color: #f8f9fa;
+  border-left: 4px solid #007bff;
+  padding: 12px;
+  margin-bottom: 10px;
+  color: #212529;
+  border-radius: 6px;
+}
+
+/* ---------------------- */
+/* 🪄 Modal Styling */
+/* ---------------------- */
+.modal-custom {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  justify-content: center;
+  align-items: center;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(4px);
+}
+
+.modal-box {
+  background: #fff;
+  border-radius: 14px;
+  padding: 30px 24px;
+  text-align: center;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.12);
+  animation: popIn 0.25s ease;
+  max-width: 420px;
+  width: 90%;
+}
+
+@keyframes popIn {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.modal-option {
+  display: inline-block;
+  padding: 10px 20px;
+  border: 1px solid #ddd;
+  border-radius: 10px;
+  background: #fafaff;
+  cursor: pointer;
+  margin: 8px;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+.modal-option:hover {
+  background: #5b5be9;
+  color: #fff;
+  border-color: #5b5be9;
+}
+
+
+.btn-gradient {
+  background: linear-gradient(90deg, #5b5be9, #9b59b6);
+  color: white;
+  border: none;
+}
+.btn-gradient:hover {
+  background: linear-gradient(90deg, #4a4acb, #8e44ad);
+}
+.modal-custom {
+  position: fixed;
+  inset: 0;
+  display: none;
+  background: rgba(0, 0, 0, 0.6);
+  justify-content: center;
+  align-items: center;
+  z-index: 9999;
+}
+.modal-box {
+  background: white;
+  border-radius: 12px;
+  padding: 2rem;
+  text-align: center;
+  max-width: 400px;
+}
+.modal-visible {
+  display: flex !important;
+}
+.feedback-box {
+  background: #f8f9fa;
+  border-left: 4px solid #0d6efd;
+}
+.progress {
+  background-color: #e9ecef;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.progress-bar {
+  transition: width 0.6s ease;
+}
+
+
+
+/* ---------------------- */
+/* 📱 Responsive Fixes */
+/* ---------------------- */
+@media (max-width: 600px) {
+  .hero {
+    padding: 40px 15px;
+  }
+  .modal-box {
+    width: 95%;
+    padding: 24px 18px;
+  }
+  .modal-option {
+    width: 100%;
+  }
 }

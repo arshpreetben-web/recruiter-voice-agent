@@ -7,4 +7,21 @@ wheels/
 *.egg-info
 
 # Virtual environments
-.venv
+#.venv
+# Ignore Python virtual environment
+myenv/
+venv/
+.env/
+
+# Ignore data, cache, and build folders
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+data/
+notebooks/
+*.sqlite3
+
+# VS Code settings
+.vscode/
