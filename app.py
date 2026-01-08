@@ -3,6 +3,9 @@ from transformers import pipeline
 import threading
 import io
 import re
+import os
+from dotenv import load_dotenv
+import google.generativeai as genai
 
 # Custom modules
 from src.stt.speech_to_text import SpeechToText
@@ -11,11 +14,24 @@ from src.nlu.pdf_parser import extract_text_from_pdf
 from src.interview.interview_manager import InterviewManager
 
 # ----------------------------------------------------------------
-# ⚙️ Initialize
+# ⚙️ Environment Setup
+# ----------------------------------------------------------------
+load_dotenv()
+api_key = os.getenv("GOOGLE_API_KEY")
+print("✅ Gemini API Key Loaded:", bool(api_key))
+
+genai.configure(api_key=api_key)
+gemini_model = genai.GenerativeModel("gemini-2.5-flash")
+
+
+
+# ----------------------------------------------------------------
+# ⚙️ Initialize Flask and Core Components
 # ----------------------------------------------------------------
 app = Flask(__name__)
 stt = SpeechToText()
 tts = TextToSpeech()
+interview = InterviewManager()
 
 # 🎯 Sentiment analysis model (3-label conversational)
 sentiment_analyzer = pipeline(
@@ -23,16 +39,8 @@ sentiment_analyzer = pipeline(
     model="cardiffnlp/twitter-roberta-base-sentiment-latest"
 )
 
-# 🎯 Feedback model — instruction-tuned (better than GPT-2)
-feedback_generator = pipeline(
-    "text2text-generation",
-    model="google/flan-t5-small"     # You can upgrade to flan-t5-base if GPU
-)
-
-interview = InterviewManager()
-
 # ----------------------------------------------------------------
-# 🏠 Home
+# 🏠 Home Route
 # ----------------------------------------------------------------
 @app.route('/')
 def home():
@@ -60,18 +68,18 @@ def rubric_scores(answer_text, question_text):
     return content_score, clarity_score
 
 # ----------------------------------------------------------------
-# 🎯 Helper — generate structured feedback
+# 🧠 Helper — Generate Feedback with Gemini
 # ----------------------------------------------------------------
 def generate_feedback(answer, question):
-    """Use FLAN-T5 to generate short structured feedback."""
+    """Use Gemini to generate structured interview feedback."""
     content_score, clarity_score = rubric_scores(answer, question)
 
     prompt = f"""
 You are a concise and friendly AI interview coach.
-Analyze the following candidate answer and provide:
+Analyze the candidate's answer and provide:
 1. One short sentence about clarity/confidence.
 2. One short sentence about content quality.
-3. A short tip for improvement.
+3. One short tip for improvement.
 
 Format exactly as:
 CLARITY: ...
@@ -83,15 +91,15 @@ ANSWER: {answer}
 """
 
     try:
-        out = feedback_generator(prompt, max_length=120, do_sample=False)[0]["generated_text"].strip()
-        lines = [l.strip() for l in re.split(r'[\r\n]+', out) if l.strip()]
-        lines = lines[:3]
-        if len(lines) < 3:
-            lines += [""] * (3 - len(lines))
-        feedback_text = " ".join(lines)
+        response = gemini_model.generate_content(prompt)
+        feedback_text = response.text.strip()
     except Exception as e:
-        print("❌ Feedback generation error:", e)
-        feedback_text = "CLARITY: Clear but can improve flow. CONTENT: Covers points but lacks detail. TIP: Add a concrete example."
+        print("❌ Gemini feedback error:", e)
+        feedback_text = (
+            "CLARITY: Clear but can improve flow. "
+            "CONTENT: Covers points but lacks depth. "
+            "TIP: Add more examples or specific details."
+        )
 
     return feedback_text, content_score, clarity_score
 
@@ -191,48 +199,101 @@ def analyze_resume():
         print("❌ Error during resume analysis:", e)
         return jsonify({"error": str(e)}), 500
 
+
 # ----------------------------------------------------------------
-# 🚀 Start Mock Interview (5 default Qs)
+# 🚀 Start Mock Interview (Dynamic Gemini-Based Questions)
 # ----------------------------------------------------------------
 @app.route('/start_interview', methods=['POST'])
 def start_interview():
     try:
+        print("📥 Received start_interview request")
+
         resume_file = request.files.get('resume')
         jd_file = request.files.get('jd')
         if not resume_file or not jd_file:
+            print("❌ Missing resume or JD file")
             return jsonify({"error": "Resume or JD missing"}), 400
 
-        _ = extract_text_from_pdf(resume_file)
-        _ = extract_text_from_pdf(jd_file)
+        # 🧩 Extract text safely
+        resume_text = extract_text_from_pdf(resume_file)
+        jd_text = extract_text_from_pdf(jd_file)
 
+        print(f"📄 Resume length: {len(resume_text)} chars")
+        print(f"📄 JD length: {len(jd_text)} chars")
+
+        # ✨ Gemini prompt for generating interview questions
+        prompt = f"""
+        You are an AI recruiter preparing 5 mock interview questions.
+        The questions must be based on the candidate's resume and job description.
+
+        --- RESUME ---
+        {resume_text[:1200]}
+
+        --- JOB DESCRIPTION ---
+        {jd_text[:1200]}
+
+        Format:
+        1. <question>
+        2. <question>
+        3. <question>
+        4. <question>
+        5. <question>
+        """
+
+        questions = []
+        try:
+            print("🤖 Sending prompt to Gemini...")
+            response = gemini_model.generate_content(prompt)
+            questions_raw = response.text.strip()
+            print("✅ Gemini response received!")
+
+            # Parse Gemini output
+            questions = [
+                q.strip(" -0123456789.").strip()
+                for q in questions_raw.split("\n")
+                if len(q.strip()) > 10
+            ][:5]
+            print("🧠 Generated questions:", questions)
+        except Exception as e:
+            print("❌ Gemini generation error:", e)
+
+        # Fallback if Gemini fails or returns blank
+        if not questions:
+            print("⚠️ Using fallback default questions.")
+            questions = [
+                "Can you explain one of your recent projects and what technologies you used?",
+                "Which programming language or tool do you feel most confident with, and why?",
+                "How do you usually approach solving a complex technical or logical problem?",
+                "Tell me about a time when you faced a challenge and how you overcame it.",
+                "Why do you think you are a good fit for this role?"
+            ]
+
+        # Prepare the final question list
         intro_question = "Let's begin. Please introduce yourself."
-        questions = [
-            "Can you explain one of your recent projects and what technologies you used?",
-            "Which programming language or tool do you feel most confident with, and why?",
-            "How do you usually approach solving a complex technical or logical problem?",
-            "Tell me about a time when you faced a challenge and how you overcame it.",
-            "Why do you think you are a good fit for this role?"
-        ]
         all_questions = [intro_question] + questions
 
+        # Save interview state
         interview.current_questions = all_questions
         interview.current_index = 0
         interview.results = []
 
-        first_question = all_questions[0]
-        print(f"🎤 First question ready: {first_question}")
+        print("✅ Final questions ready:")
+        for i, q in enumerate(all_questions):
+            print(f"{i+1}. {q}")
 
+        # Send proper JSON back to frontend
         return jsonify({
             "status": "success",
-            "first_question": first_question,
+            "first_question": intro_question,
             "all_questions": all_questions
         }), 200
+
     except Exception as e:
         print("❌ Error in /start_interview:", e)
         return jsonify({"error": str(e)}), 500
 
 # ----------------------------------------------------------------
-# 🔊 Text-to-Speech (gTTS)
+# 🔊 Text-to-Speech
 # ----------------------------------------------------------------
 @app.route('/speak_question', methods=['POST'])
 def speak_question():
@@ -251,7 +312,7 @@ def speak_question():
         return jsonify({"error": str(e)}), 500
 
 # ----------------------------------------------------------------
-# 📊 Summary
+# 📊 Summary Page
 # ----------------------------------------------------------------
 @app.route('/summary')
 def summary():
